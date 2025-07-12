@@ -9,14 +9,16 @@ pygame.init()
 INITIAL_WINDOW_WIDTH = 800
 INITIAL_WINDOW_HEIGHT = 600
 TILE_SIZE = 32
-INITIAL_TREE_DENSITY = 0.45  # Increased from 0.3 to 0.45
-FOREST_ITERATIONS = 3  # Increased from 2 to 3 for more clustering
+INITIAL_TREE_DENSITY = 0.35  # Reduced from 0.45
+FOREST_ITERATIONS = 2  # Reduced from 3
+USE_CLUSTERING = True  # Toggle for forest generation method
 
 # Colors
 BLACK = (0, 0, 0)
 WHITE = (255, 255, 255)
 GREEN = (0, 255, 0)
 BROWN = (139, 69, 19)
+RED = (255, 0, 0)
 
 # Create the game window with resizable flag
 screen = pygame.display.set_mode((INITIAL_WINDOW_WIDTH, INITIAL_WINDOW_HEIGHT), pygame.RESIZABLE)
@@ -102,8 +104,8 @@ class GameMap:
                     count += 1
         return count
 
-    def generate_map(self):
-        # First pass: Random initial tree placement
+    def generate_random_map(self):
+        """Generate a completely random forest"""
         for y in range(self.height):
             for x in range(self.width):
                 # Keep spawn area clear
@@ -114,12 +116,19 @@ class GameMap:
                 else:
                     self.tiles[y][x] = 1 if random.random() < INITIAL_TREE_DENSITY else 0
 
+    def generate_clustered_map(self):
+        """Generate a clustered forest using cellular automata"""
+        # First pass: Random initial tree placement
+        self.generate_random_map()
+
         # Second pass: Create clusters using cellular automata
         for _ in range(FOREST_ITERATIONS):
             new_tiles = [[0 for _ in range(self.width)] for _ in range(self.height)]
             for y in range(self.height):
                 for x in range(self.width):
                     # Keep spawn area clear
+                    center_x = self.width // 2
+                    center_y = self.height // 2
                     if abs(x - center_x) <= 1 and abs(y - center_y) <= 1:
                         new_tiles[y][x] = 0
                         continue
@@ -129,9 +138,16 @@ class GameMap:
                     if self.tiles[y][x] == 1:  # Tree exists
                         new_tiles[y][x] = 1 if neighbors >= 3 else 0
                     else:  # No tree
-                        new_tiles[y][x] = 1 if neighbors >= 4 else 0  # Changed from 5 to 4 for denser forests
+                        new_tiles[y][x] = 1 if neighbors >= 5 else 0
 
             self.tiles = new_tiles
+
+    def generate_map(self):
+        """Generate map based on current generation method"""
+        if USE_CLUSTERING:
+            self.generate_clustered_map()
+        else:
+            self.generate_random_map()
 
     def draw(self, screen):
         for y in range(self.height):
@@ -141,6 +157,13 @@ class GameMap:
                     pygame.draw.rect(screen, GREEN, rect)
                 elif self.tiles[y][x] == 1:  # Tree
                     pygame.draw.rect(screen, BROWN, rect)
+
+def draw_mode_text(screen, use_clustering):
+    """Draw the current forest generation mode"""
+    font = pygame.font.Font(None, 36)
+    mode = "Clustered" if use_clustering else "Random"
+    text = font.render(f"Mode: {mode} (C to toggle, R to regenerate)", True, RED)
+    screen.blit(text, (10, 10))
 
 # Create game objects
 window_width = INITIAL_WINDOW_WIDTH
@@ -169,6 +192,12 @@ while running:
             # Restore player position relative to new screen size
             player.x = int(window_width * player_x_percent)
             player.y = int(window_height * player_y_percent)
+        elif event.type == pygame.KEYDOWN:
+            if event.key == pygame.K_c:  # Toggle clustering
+                USE_CLUSTERING = not USE_CLUSTERING
+                game_map.generate_map()
+            elif event.key == pygame.K_r:  # Regenerate map
+                game_map.generate_map()
 
     # Handle keyboard input - now supporting both WASD and arrow keys
     keys = pygame.key.get_pressed()
@@ -180,6 +209,7 @@ while running:
     screen.fill(BLACK)
     game_map.draw(screen)
     player.draw(screen)
+    draw_mode_text(screen, USE_CLUSTERING)
 
     # Update the display
     pygame.display.flip()

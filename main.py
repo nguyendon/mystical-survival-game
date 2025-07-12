@@ -487,7 +487,10 @@ async def main():
                 for item in self.items:
                     item.draw(screen)
 
-    def draw_ui_text(screen, use_clustering, map_locked, view_mode):
+    def draw_ui_text(screen, use_clustering, map_locked, view_mode, show_instructions):
+        if not show_instructions:
+            return
+
         font = pygame.font.Font(None, 36)
         mode = "Clustered" if use_clustering else "Random"
         lock_status = "LOCKED" if map_locked else "UNLOCKED"
@@ -506,12 +509,16 @@ async def main():
             movement_text = font.render("Use arrows/WASD to move, Q/E to rotate", True, RED)
             screen.blit(movement_text, (10, 130))
 
+        help_text = font.render("Press Shift + / to toggle instructions", True, RED)
+        screen.blit(help_text, (10, 170))
+
     # Create game objects
     window_width = INITIAL_WINDOW_WIDTH
     window_height = INITIAL_WINDOW_HEIGHT
     screen = pygame.display.set_mode((window_width, window_height))
     player = Player(window_width // 2, window_height // 2)
     game_map = GameMap(window_width, window_height)
+    show_instructions = True  # Variable to track if instructions should be shown
 
     # Initial safe spawn
     player.x, player.y = player.find_safe_spawn(game_map, window_width, window_height)
@@ -521,6 +528,9 @@ async def main():
     running = True
 
     while running:
+        # Handle keyboard input
+        keys = pygame.key.get_pressed()
+
         # Handle events
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
@@ -540,6 +550,8 @@ async def main():
                     player.view_mode = "first_person" if player.view_mode == "top_down" else "top_down"
                 elif event.key == pygame.K_i:
                     player.inventory.visible = not player.inventory.visible
+                elif event.key == pygame.K_SLASH and (keys[pygame.K_LSHIFT] or keys[pygame.K_RSHIFT]):
+                    show_instructions = not show_instructions
 
         # Handle keyboard input
         keys = pygame.key.get_pressed()
@@ -573,7 +585,7 @@ async def main():
         # Draw inventory if visible
         player.inventory.draw(screen)
 
-        draw_ui_text(screen, USE_CLUSTERING, MAP_LOCKED, player.view_mode)
+        draw_ui_text(screen, USE_CLUSTERING, MAP_LOCKED, player.view_mode, show_instructions)
 
         pygame.display.flip()
         await asyncio.sleep(0)  # Required for web browser

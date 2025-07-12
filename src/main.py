@@ -2,6 +2,7 @@ import pygame
 import sys
 import random
 import math
+from enum import Enum
 
 # Initialize Pygame
 pygame.init()
@@ -11,7 +12,9 @@ INITIAL_WINDOW_WIDTH = 800
 INITIAL_WINDOW_HEIGHT = 600
 TILE_SIZE = 32
 PLAYER_SIZE = 20
+ITEM_SIZE = 16
 INITIAL_TREE_DENSITY = 0.35
+ITEM_SPAWN_CHANCE = 0.02  # 2% chance per empty tile
 FOREST_ITERATIONS = 2
 USE_CLUSTERING = True
 MAP_LOCKED = False
@@ -19,6 +22,15 @@ FOV = math.pi / 3  # 60 degrees field of view
 NUM_RAYS = 120  # Number of rays to cast
 MAX_DEPTH = 800  # Maximum ray distance
 MIN_DISTANCE = 0.1  # Minimum ray distance to prevent division by zero
+MOVEMENT_SPEED = 4
+ROTATION_SPEED = 0.04
+
+class ItemType(Enum):
+    MUSHROOM = "Mushroom"
+    BERRY = "Berry"
+    STICK = "Stick"
+    STONE = "Stone"
+    FLOWER = "Flower"
 
 # Colors
 BLACK = (0, 0, 0)
@@ -29,10 +41,57 @@ RED = (255, 0, 0)
 YELLOW = (255, 255, 0)
 SKY_BLUE = (135, 206, 235)
 GROUND_GREEN = (34, 139, 34)
+ITEM_COLORS = {
+    ItemType.MUSHROOM: (200, 200, 200),
+    ItemType.BERRY: (255, 0, 0),
+    ItemType.STICK: (139, 69, 19),
+    ItemType.STONE: (128, 128, 128),
+    ItemType.FLOWER: (255, 192, 203)
+}
 
-# Create the game window with resizable flag
-screen = pygame.display.set_mode((INITIAL_WINDOW_WIDTH, INITIAL_WINDOW_HEIGHT), pygame.RESIZABLE)
-pygame.display.set_caption("Mystical Survival Game")
+class Item:
+    def __init__(self, item_type, x, y):
+        self.type = item_type
+        self.x = x
+        self.y = y
+        self.width = ITEM_SIZE
+        self.height = ITEM_SIZE
+
+    def draw(self, screen):
+        pygame.draw.rect(screen, ITEM_COLORS[self.type],
+                        (self.x, self.y, self.width, self.height))
+
+class Inventory:
+    def __init__(self):
+        self.items = {}  # Dictionary to store item counts
+        self.visible = False
+        self.font = pygame.font.Font(None, 32)
+
+    def add_item(self, item_type):
+        if item_type in self.items:
+            self.items[item_type] += 1
+        else:
+            self.items[item_type] = 1
+
+    def draw(self, screen):
+        if not self.visible:
+            return
+
+        # Draw inventory background
+        inventory_surface = pygame.Surface((300, 400))
+        inventory_surface.fill((50, 50, 50))
+        inventory_surface.set_alpha(230)
+
+        # Draw items list
+        y_offset = 10
+        for item_type, count in self.items.items():
+            text = f"{item_type.value}: {count}"
+            text_surface = self.font.render(text, True, WHITE)
+            inventory_surface.blit(text_surface, (10, y_offset))
+            y_offset += 30
+
+        # Position inventory on screen
+        screen.blit(inventory_surface, (10, 10))
 
 class Ray:
     def __init__(self, angle):
@@ -46,30 +105,38 @@ class Player:
         self.y = y
         self.width = PLAYER_SIZE
         self.height = PLAYER_SIZE
-        self.speed = 5
+        self.speed = MOVEMENT_SPEED
         self.view_mode = "top_down"
         self.angle = 0  # Facing angle in radians (0 is facing right)
-        self.rotation_speed = 0.1
+        self.rotation_speed = ROTATION_SPEED
+        self.inventory = Inventory()
+        self.pickup_range = TILE_SIZE  # Range for picking up items
 
     def rotate(self, direction):
         self.angle += direction * self.rotation_speed
-        # Keep angle between 0 and 2π
         self.angle %= 2 * math.pi
 
     def move(self, dx, dy, window_width, window_height, game_map):
         if self.view_mode == "first_person":
             # In first person, movement is relative to viewing angle
-            # Invert dy for more intuitive controls (up = forward)
-            forward = -dy * self.speed  # Inverted dy
-            strafe = dx * self.speed
+            forward = -dy * self.speed  # Forward/backward
+            strafe = dx * self.speed    # Strafe left/right
 
-            # Calculate new position based on angle
-            new_x = self.x + math.cos(self.angle) * forward + math.cos(self.angle + math.pi/2) * strafe
-            new_y = self.y + math.sin(self.angle) * forward + math.sin(self.angle + math.pi/2) * strafe
+            # Calculate movement vector
+            move_x = math.cos(self.angle) * forward + math.cos(self.angle + math.pi/2) * strafe
+            move_y = math.sin(self.angle) * forward + math.sin(self.angle + math.pi/2) * strafe
+
+            # Try movement along both axes independently
+            self.try_move(move_x, 0, window_width, window_height, game_map)
+            self.try_move(0, move_y, window_width, window_height, game_map)
         else:
             # Top-down movement
-            new_x = self.x + dx * self.speed
-            new_y = self.y + dy * self.speed
+            self.try_move(dx * self.speed, dy * self.speed, window_width, window_height, game_map)
+
+    def try_move(self, dx, dy, window_width, window_height, game_map):
+        """Attempt to move by the given delta, checking for collisions"""
+        new_x = self.x + dx
+        new_y = self.y + dy
 
         # Keep player within screen bounds
         new_x = max(PLAYER_SIZE, min(new_x, window_width - PLAYER_SIZE))
@@ -80,34 +147,47 @@ class Player:
         tile_y = int(new_y // TILE_SIZE)
 
         # Check if the new position would collide with any trees
-        tiles_to_check = []
-
-        # Add all potentially overlapping tiles
-        for check_y in range(tile_y - 1, tile_y + 2):
-            for check_x in range(tile_x - 1, tile_x + 2):
-                if (0 <= check_x < game_map.width and 0 <= check_y < game_map.height):
-                    tiles_to_check.append((check_x, check_y))
-
-        # Check if any of these tiles contain a tree
-        can_move = True
-        for check_x, check_y in tiles_to_check:
-            if game_map.tiles[check_y][check_x] == 1:  # Tree collision
-                # Calculate tile boundaries
-                tile_left = check_x * TILE_SIZE
-                tile_right = tile_left + TILE_SIZE
-                tile_top = check_y * TILE_SIZE
-                tile_bottom = tile_top + TILE_SIZE
-
-                # Check if player's new position would overlap with this tile
-                if (new_x < tile_right and new_x + self.width > tile_left and
-                    new_y < tile_bottom and new_y + self.height > tile_top):
-                    can_move = False
-                    break
-
-        # Only update position if no collision
-        if can_move:
+        if not self.check_collision(new_x, new_y, game_map):
             self.x = new_x
             self.y = new_y
+
+    def check_collision(self, x, y, game_map):
+        """Check if a position would result in a collision"""
+        # Get the tiles that the player's corners would occupy
+        corners = [
+            (x, y),  # Top-left
+            (x + self.width, y),  # Top-right
+            (x, y + self.height),  # Bottom-left
+            (x + self.width, y + self.height)  # Bottom-right
+        ]
+
+        for corner_x, corner_y in corners:
+            tile_x = int(corner_x // TILE_SIZE)
+            tile_y = int(corner_y // TILE_SIZE)
+
+            if (0 <= tile_x < game_map.width and
+                0 <= tile_y < game_map.height and
+                game_map.tiles[tile_y][tile_x] == 1):
+                return True
+        return False
+
+    def try_pickup_items(self, game_map):
+        """Try to pick up any items within range"""
+        items_to_remove = []
+        player_center = (self.x + self.width/2, self.y + self.height/2)
+
+        for item in game_map.items:
+            item_center = (item.x + item.width/2, item.y + item.height/2)
+            distance = math.sqrt((player_center[0] - item_center[0])**2 +
+                               (player_center[1] - item_center[1])**2)
+
+            if distance < self.pickup_range:
+                self.inventory.add_item(item.type)
+                items_to_remove.append(item)
+
+        # Remove collected items
+        for item in items_to_remove:
+            game_map.items.remove(item)
 
     def find_safe_spawn(self, game_map, window_width, window_height):
         """Find a safe spawn position without trees"""
@@ -115,17 +195,17 @@ class Player:
         center_y = window_height // 2
 
         # Try center first
-        if self.is_position_safe(center_x, center_y, game_map):
-            return center_x, center_y
+        if not self.check_collision(center_x - self.width/2, center_y - self.height/2, game_map):
+            return center_x - self.width/2, center_y - self.height/2
 
         # Search in expanding circles
         for radius in range(TILE_SIZE, max(window_width, window_height) // 2, TILE_SIZE):
             for angle in range(0, 360, 30):  # Check every 30 degrees
                 rad = math.radians(angle)
-                test_x = center_x + radius * math.cos(rad)
-                test_y = center_y + radius * math.sin(rad)
+                test_x = center_x + radius * math.cos(rad) - self.width/2
+                test_y = center_y + radius * math.sin(rad) - self.height/2
 
-                if self.is_position_safe(test_x, test_y, game_map):
+                if not self.check_collision(test_x, test_y, game_map):
                     return test_x, test_y
 
         # If no safe spot found, clear an area and use center
@@ -137,23 +217,7 @@ class Player:
                     0 <= center_tile_y + dy < game_map.height):
                     game_map.tiles[center_tile_y + dy][center_tile_x + dx] = 0
 
-        return center_x, center_y
-
-    def is_position_safe(self, x, y, game_map):
-        """Check if a position is safe (no trees)"""
-        tile_x = int(x // TILE_SIZE)
-        tile_y = int(y // TILE_SIZE)
-
-        # Check surrounding tiles
-        for dy in [-1, 0, 1]:
-            for dx in [-1, 0, 1]:
-                check_x = tile_x + dx
-                check_y = tile_y + dy
-                if (0 <= check_x < game_map.width and
-                    0 <= check_y < game_map.height and
-                    game_map.tiles[check_y][check_x] == 1):
-                    return False
-        return True
+        return center_x - self.width/2, center_y - self.height/2
 
     def cast_rays(self, game_map):
         rays = []
@@ -171,7 +235,7 @@ class Player:
             ray_cos = math.cos(ray.angle)
             ray_sin = math.sin(ray.angle)
 
-            # DDA (Digital Differential Analysis) algorithm for ray casting
+            # DDA algorithm for ray casting
             map_x = int(ray_x // TILE_SIZE)
             map_y = int(ray_y // TILE_SIZE)
 
@@ -225,7 +289,7 @@ class Player:
 
             # Fix fisheye effect
             ray.distance *= math.cos(ray.angle - self.angle)
-            ray.distance = max(MIN_DISTANCE, ray.distance)  # Ensure minimum distance
+            ray.distance = max(MIN_DISTANCE, ray.distance)
 
             rays.append(ray)
 
@@ -278,12 +342,24 @@ class Player:
 class GameMap:
     def __init__(self, window_width, window_height):
         self.update_size(window_width, window_height)
+        self.items = []
         self.generate_map()
 
     def update_size(self, window_width, window_height):
         self.width = window_width // TILE_SIZE
         self.height = window_height // TILE_SIZE
         self.tiles = [[0 for _ in range(self.width)] for _ in range(self.height)]
+
+    def spawn_items(self):
+        """Spawn items randomly in empty spaces"""
+        self.items.clear()
+        for y in range(self.height):
+            for x in range(self.width):
+                if self.tiles[y][x] == 0 and random.random() < ITEM_SPAWN_CHANCE:
+                    item_type = random.choice(list(ItemType))
+                    item_x = x * TILE_SIZE + (TILE_SIZE - ITEM_SIZE) // 2
+                    item_y = y * TILE_SIZE + (TILE_SIZE - ITEM_SIZE) // 2
+                    self.items.append(Item(item_type, item_x, item_y))
 
     def count_neighbor_trees(self, x, y):
         count = 0
@@ -301,6 +377,7 @@ class GameMap:
         for y in range(self.height):
             for x in range(self.width):
                 self.tiles[y][x] = 1 if random.random() < INITIAL_TREE_DENSITY else 0
+        self.spawn_items()
 
     def generate_clustered_map(self):
         self.generate_random_map()
@@ -316,6 +393,7 @@ class GameMap:
                         new_tiles[y][x] = 1 if neighbors >= 5 else 0
 
             self.tiles = new_tiles
+        self.spawn_items()
 
     def generate_map(self):
         if not MAP_LOCKED:
@@ -334,6 +412,10 @@ class GameMap:
                     elif self.tiles[y][x] == 1:  # Tree
                         pygame.draw.rect(screen, BROWN, rect)
 
+            # Draw items
+            for item in self.items:
+                item.draw(screen)
+
 def draw_ui_text(screen, use_clustering, map_locked, view_mode):
     font = pygame.font.Font(None, 36)
     mode = "Clustered" if use_clustering else "Random"
@@ -346,7 +428,7 @@ def draw_ui_text(screen, use_clustering, map_locked, view_mode):
     controls_text = font.render(f"Map: {lock_status} (L to lock, C to toggle, R to regenerate)", True, RED)
     screen.blit(controls_text, (10, 50))
 
-    view_text = font.render(f"View: {view_status} (V to toggle)", True, RED)
+    view_text = font.render(f"View: {view_status} (V to toggle, I for inventory)", True, RED)
     screen.blit(view_text, (10, 90))
 
     if view_mode == "first_person":
@@ -356,6 +438,7 @@ def draw_ui_text(screen, use_clustering, map_locked, view_mode):
 # Create game objects
 window_width = INITIAL_WINDOW_WIDTH
 window_height = INITIAL_WINDOW_HEIGHT
+screen = pygame.display.set_mode((window_width, window_height), pygame.RESIZABLE)
 player = Player(window_width // 2, window_height // 2)
 game_map = GameMap(window_width, window_height)
 
@@ -376,10 +459,7 @@ while running:
             window_height = event.h
             screen = pygame.display.set_mode((window_width, window_height), pygame.RESIZABLE)
             if not MAP_LOCKED:
-                player_x_percent = player.x / window_width
-                player_y_percent = player.y / window_height
                 game_map = GameMap(window_width, window_height)
-                # Find safe spawn in new map
                 player.x, player.y = player.find_safe_spawn(game_map, window_width, window_height)
         elif event.type == pygame.KEYDOWN:
             if not MAP_LOCKED:
@@ -394,6 +474,8 @@ while running:
                 MAP_LOCKED = not MAP_LOCKED
             elif event.key == pygame.K_v:
                 player.view_mode = "first_person" if player.view_mode == "top_down" else "top_down"
+            elif event.key == pygame.K_i:
+                player.inventory.visible = not player.inventory.visible
 
     # Handle keyboard input
     keys = pygame.key.get_pressed()
@@ -411,6 +493,9 @@ while running:
 
     player.move(dx, dy, window_width, window_height, game_map)
 
+    # Try to pick up items
+    player.try_pickup_items(game_map)
+
     # Draw everything
     screen.fill(BLACK)
 
@@ -420,6 +505,9 @@ while running:
     else:
         game_map.draw(screen, player)
         player.draw(screen)
+
+    # Draw inventory if visible
+    player.inventory.draw(screen)
 
     draw_ui_text(screen, USE_CLUSTERING, MAP_LOCKED, player.view_mode)
 

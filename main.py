@@ -379,7 +379,7 @@ async def main():
                     (right_x, right_y)
                 ])
 
-        def draw_3d(self, screen, rays):
+        def draw_3d(self, screen, rays, game_map):
             # Clear screen with sky and ground
             screen.fill(SKY_BLUE)
             pygame.draw.rect(screen, GROUND_GREEN,
@@ -389,24 +389,35 @@ async def main():
             # Draw vertical strips for each ray
             strip_width = screen.get_width() // len(rays)
             for i, ray in enumerate(rays):
-                # Calculate wall height based on distance
-                wall_height = min((TILE_SIZE * screen.get_height()) / ray.distance, screen.get_height() * 2)
+                # Calculate wall height based on distance (increased height multiplier)
+                wall_height = min((TILE_SIZE * 1.5 * screen.get_height()) / ray.distance, screen.get_height() * 4)
 
-                # Calculate wall strip position
+                # Calculate wall strip position (adjusted to make walls taller)
                 wall_top = (screen.get_height() - wall_height) / 2
                 wall_bottom = (screen.get_height() + wall_height) / 2
 
+                # Check if ray hit map boundary
+                ray_x = self.x + self.width/2 + math.cos(ray.angle) * ray.distance
+                ray_y = self.y + self.height/2 + math.sin(ray.angle) * ray.distance
+                is_boundary = (ray_x <= 0 or ray_x >= game_map.width * TILE_SIZE or
+                             ray_y <= 0 or ray_y >= game_map.height * TILE_SIZE)
+
                 # Draw wall strip with distance shading
                 shade = max(0, min(255, 255 - ray.distance * 0.25))
-                wall_color = (shade, shade * 0.8, shade * 0.6)  # Brownish color with distance shading
+                if is_boundary:
+                    # Use a more distinct color for boundaries (bright red)
+                    wall_color = (min(255, shade * 2), 0, 0)  # Brighter red for boundaries
+                else:
+                    wall_color = (shade, shade * 0.8, shade * 0.6)  # Normal brownish color
+
                 pygame.draw.rect(screen, wall_color,
                                (i * strip_width, wall_top,
                                 strip_width + 1, wall_bottom - wall_top))
 
                 # Draw items if they exist and are closer than walls
                 if ray.item and ray.item_distance < ray.distance:
-                    # Calculate item height based on distance
-                    item_height = min((ITEM_SIZE * screen.get_height()) / ray.item_distance, screen.get_height())
+                    # Calculate item height based on distance (adjusted to match new wall scale)
+                    item_height = min((ITEM_SIZE * 1.5 * screen.get_height()) / ray.item_distance, screen.get_height() * 2)
 
                     # Calculate item position
                     item_top = (screen.get_height() - item_height) / 2
@@ -647,7 +658,7 @@ async def main():
 
         if player.view_mode == "first_person":
             rays = player.cast_rays(game_map)
-            player.draw_3d(screen, rays)
+            player.draw_3d(screen, rays, game_map)
         else:
             game_map.draw(screen, player)
             player.draw(screen)

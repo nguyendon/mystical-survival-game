@@ -1,6 +1,7 @@
 import pygame
 import sys
 import random
+import math
 
 # Initialize Pygame
 pygame.init()
@@ -9,11 +10,14 @@ pygame.init()
 INITIAL_WINDOW_WIDTH = 800
 INITIAL_WINDOW_HEIGHT = 600
 TILE_SIZE = 32
-PLAYER_SIZE = 20  # Reduced from 32 to 20
+PLAYER_SIZE = 20
 INITIAL_TREE_DENSITY = 0.35
 FOREST_ITERATIONS = 2
 USE_CLUSTERING = True
-MAP_LOCKED = False  # New constant for map locking
+MAP_LOCKED = False
+FOV = math.pi / 3  # 60 degrees field of view
+NUM_RAYS = 120  # Number of rays to cast
+MAX_DEPTH = 800  # Maximum ray distance
 
 # Colors
 BLACK = (0, 0, 0)
@@ -22,12 +26,19 @@ GREEN = (0, 255, 0)
 BROWN = (139, 69, 19)
 RED = (255, 0, 0)
 YELLOW = (255, 255, 0)
+SKY_BLUE = (135, 206, 235)
+GROUND_GREEN = (34, 139, 34)
 
 # Create the game window with resizable flag
 screen = pygame.display.set_mode((INITIAL_WINDOW_WIDTH, INITIAL_WINDOW_HEIGHT), pygame.RESIZABLE)
 pygame.display.set_caption("Mystical Survival Game")
 
-# Player class
+class Ray:
+    def __init__(self, angle):
+        self.angle = angle
+        self.distance = 0
+        self.hit_point = (0, 0)
+
 class Player:
     def __init__(self, x, y):
         self.x = x
@@ -35,20 +46,36 @@ class Player:
         self.width = PLAYER_SIZE
         self.height = PLAYER_SIZE
         self.speed = 5
-        self.view_mode = "top_down"  # New attribute for view mode
+        self.view_mode = "top_down"
+        self.angle = 0  # Facing angle in radians (0 is facing right)
+        self.rotation_speed = 0.1
+
+    def rotate(self, direction):
+        self.angle += direction * self.rotation_speed
+        # Keep angle between 0 and 2π
+        self.angle %= 2 * math.pi
 
     def move(self, dx, dy, window_width, window_height, game_map):
-        # Calculate new position
-        new_x = self.x + dx * self.speed
-        new_y = self.y + dy * self.speed
+        if self.view_mode == "first_person":
+            # In first person, movement is relative to viewing angle
+            forward = dy * self.speed
+            strafe = dx * self.speed
 
-        # Keep player within screen bounds using current window size
+            # Calculate new position based on angle
+            new_x = self.x + math.cos(self.angle) * forward + math.cos(self.angle + math.pi/2) * strafe
+            new_y = self.y + math.sin(self.angle) * forward + math.sin(self.angle + math.pi/2) * strafe
+        else:
+            # Top-down movement
+            new_x = self.x + dx * self.speed
+            new_y = self.y + dy * self.speed
+
+        # Keep player within screen bounds
         new_x = max(0, min(new_x, window_width - self.width))
         new_y = max(0, min(new_y, window_height - self.height))
 
         # Convert pixel coordinates to tile coordinates for collision checking
-        tile_x = new_x // TILE_SIZE
-        tile_y = new_y // TILE_SIZE
+        tile_x = int(new_x // TILE_SIZE)
+        tile_y = int(new_y // TILE_SIZE)
 
         # Check if the new position would collide with any trees
         tiles_to_check = []
@@ -80,17 +107,101 @@ class Player:
             self.x = new_x
             self.y = new_y
 
+    def cast_rays(self, game_map):
+        rays = []
+        start_angle = self.angle - FOV/2
+        angle_step = FOV / NUM_RAYS
+
+        for i in range(NUM_RAYS):
+            ray = Ray(start_angle + i * angle_step)
+
+            # Ray starting point
+            ray_x = self.x + self.width/2
+            ray_y = self.y + self.height/2
+
+            # Ray direction vector
+            ray_cos = math.cos(ray.angle)
+            ray_sin = math.sin(ray.angle)
+
+            # Distance to next tile boundary
+            distance = 0
+            hit = False
+
+            while not hit and distance < MAX_DEPTH:
+                distance += 1
+
+                # Check ray position
+                check_x = int((ray_x + ray_cos * distance) // TILE_SIZE)
+                check_y = int((ray_y + ray_sin * distance) // TILE_SIZE)
+
+                # Check if ray is out of bounds
+                if (check_x < 0 or check_x >= game_map.width or
+                    check_y < 0 or check_y >= game_map.height):
+                    hit = True
+                    continue
+
+                # Check if ray hit a tree
+                if game_map.tiles[check_y][check_x] == 1:
+                    hit = True
+                    ray.hit_point = (ray_x + ray_cos * distance,
+                                   ray_y + ray_sin * distance)
+                    ray.distance = distance
+
+            if not hit:
+                ray.distance = MAX_DEPTH
+                ray.hit_point = (ray_x + ray_cos * MAX_DEPTH,
+                               ray_y + ray_sin * MAX_DEPTH)
+
+            # Fix fisheye effect by adjusting distance
+            ray.distance *= math.cos(ray.angle - self.angle)
+
+            rays.append(ray)
+
+        return rays
+
     def draw(self, screen):
         if self.view_mode == "top_down":
+            # Draw player rectangle
             pygame.draw.rect(screen, WHITE, (self.x, self.y, self.width, self.height))
-            # Draw a small triangle to indicate direction (facing up by default)
+
+            # Calculate direction indicator points
+            tip_x = self.x + self.width/2 + math.cos(self.angle) * self.width
+            tip_y = self.y + self.height/2 + math.sin(self.angle) * self.height
+            left_x = self.x + self.width/2 + math.cos(self.angle - 2.6) * self.width * 0.7
+            left_y = self.y + self.height/2 + math.sin(self.angle - 2.6) * self.height * 0.7
+            right_x = self.x + self.width/2 + math.cos(self.angle + 2.6) * self.width * 0.7
+            right_y = self.y + self.height/2 + math.sin(self.angle + 2.6) * self.height * 0.7
+
+            # Draw direction triangle
             pygame.draw.polygon(screen, YELLOW, [
-                (self.x + self.width // 2, self.y),  # Top
-                (self.x + self.width // 4, self.y + self.height // 2),  # Bottom left
-                (self.x + 3 * self.width // 4, self.y + self.height // 2)  # Bottom right
+                (tip_x, tip_y),
+                (left_x, left_y),
+                (right_x, right_y)
             ])
 
-# Simple map class
+    def draw_3d(self, screen, rays):
+        # Clear screen with sky and ground
+        screen.fill(SKY_BLUE)
+        pygame.draw.rect(screen, GROUND_GREEN,
+                        (0, screen.get_height()//2,
+                         screen.get_width(), screen.get_height()//2))
+
+        # Draw vertical strips for each ray
+        strip_width = screen.get_width() // len(rays)
+        for i, ray in enumerate(rays):
+            # Calculate wall height based on distance
+            wall_height = (TILE_SIZE * screen.get_height()) / ray.distance
+
+            # Calculate wall strip position
+            wall_top = (screen.get_height() - wall_height) / 2
+            wall_bottom = (screen.get_height() + wall_height) / 2
+
+            # Draw wall strip
+            wall_color = (max(0, min(255, 255 - ray.distance * 0.5)),) * 3  # Darken with distance
+            pygame.draw.rect(screen, wall_color,
+                           (i * strip_width, wall_top,
+                            strip_width + 1, wall_bottom - wall_top))
+
 class GameMap:
     def __init__(self, window_width, window_height):
         self.update_size(window_width, window_height)
@@ -102,7 +213,6 @@ class GameMap:
         self.tiles = [[0 for _ in range(self.width)] for _ in range(self.height)]
 
     def count_neighbor_trees(self, x, y):
-        """Count the number of neighboring trees around a position."""
         count = 0
         for dy in [-1, 0, 1]:
             for dx in [-1, 0, 1]:
@@ -115,10 +225,8 @@ class GameMap:
         return count
 
     def generate_random_map(self):
-        """Generate a completely random forest"""
         for y in range(self.height):
             for x in range(self.width):
-                # Keep spawn area clear
                 center_x = self.width // 2
                 center_y = self.height // 2
                 if abs(x - center_x) <= 1 and abs(y - center_y) <= 1:
@@ -127,16 +235,12 @@ class GameMap:
                     self.tiles[y][x] = 1 if random.random() < INITIAL_TREE_DENSITY else 0
 
     def generate_clustered_map(self):
-        """Generate a clustered forest using cellular automata"""
-        # First pass: Random initial tree placement
         self.generate_random_map()
 
-        # Second pass: Create clusters using cellular automata
         for _ in range(FOREST_ITERATIONS):
             new_tiles = [[0 for _ in range(self.width)] for _ in range(self.height)]
             for y in range(self.height):
                 for x in range(self.width):
-                    # Keep spawn area clear
                     center_x = self.width // 2
                     center_y = self.height // 2
                     if abs(x - center_x) <= 1 and abs(y - center_y) <= 1:
@@ -144,16 +248,14 @@ class GameMap:
                         continue
 
                     neighbors = self.count_neighbor_trees(x, y)
-                    # Tree survival/birth rules
-                    if self.tiles[y][x] == 1:  # Tree exists
+                    if self.tiles[y][x] == 1:
                         new_tiles[y][x] = 1 if neighbors >= 3 else 0
-                    else:  # No tree
+                    else:
                         new_tiles[y][x] = 1 if neighbors >= 5 else 0
 
             self.tiles = new_tiles
 
     def generate_map(self):
-        """Generate map based on current generation method"""
         if not MAP_LOCKED:
             if USE_CLUSTERING:
                 self.generate_clustered_map()
@@ -170,23 +272,24 @@ class GameMap:
                     elif self.tiles[y][x] == 1:  # Tree
                         pygame.draw.rect(screen, BROWN, rect)
 
-def draw_ui_text(screen, use_clustering, map_locked):
-    """Draw the current forest generation mode and controls"""
+def draw_ui_text(screen, use_clustering, map_locked, view_mode):
     font = pygame.font.Font(None, 36)
     mode = "Clustered" if use_clustering else "Random"
     lock_status = "LOCKED" if map_locked else "UNLOCKED"
+    view_status = "First Person" if view_mode == "first_person" else "Top Down"
 
-    # Mode text
     mode_text = font.render(f"Mode: {mode}", True, RED)
     screen.blit(mode_text, (10, 10))
 
-    # Controls text
     controls_text = font.render(f"Map: {lock_status} (L to lock, C to toggle, R to regenerate)", True, RED)
     screen.blit(controls_text, (10, 50))
 
-    # View mode text
-    view_text = font.render("V to toggle view mode", True, RED)
+    view_text = font.render(f"View: {view_status} (V to toggle)", True, RED)
     screen.blit(view_text, (10, 90))
+
+    if view_mode == "first_person":
+        movement_text = font.render("Use arrows/WASD to move, Q/E to rotate", True, RED)
+        screen.blit(movement_text, (10, 130))
 
 # Create game objects
 window_width = INITIAL_WINDOW_WIDTH
@@ -204,48 +307,57 @@ while running:
         if event.type == pygame.QUIT:
             running = False
         elif event.type == pygame.VIDEORESIZE:
-            # Handle window resize event
             window_width = event.w
             window_height = event.h
             screen = pygame.display.set_mode((window_width, window_height), pygame.RESIZABLE)
             if not MAP_LOCKED:
-                # Store player position as percentage of screen before resize
                 player_x_percent = player.x / window_width
                 player_y_percent = player.y / window_height
-                game_map = GameMap(window_width, window_height)  # Regenerate map for new size
-                # Restore player position relative to new screen size
+                game_map = GameMap(window_width, window_height)
                 player.x = int(window_width * player_x_percent)
                 player.y = int(window_height * player_y_percent)
         elif event.type == pygame.KEYDOWN:
             if not MAP_LOCKED:
-                if event.key == pygame.K_c:  # Toggle clustering
+                if event.key == pygame.K_c:
                     USE_CLUSTERING = not USE_CLUSTERING
                     game_map.generate_map()
-                elif event.key == pygame.K_r:  # Regenerate map
+                elif event.key == pygame.K_r:
                     game_map.generate_map()
-            if event.key == pygame.K_l:  # Toggle map lock
+            if event.key == pygame.K_l:
                 MAP_LOCKED = not MAP_LOCKED
-            elif event.key == pygame.K_v:  # Toggle view mode
+            elif event.key == pygame.K_v:
                 player.view_mode = "first_person" if player.view_mode == "top_down" else "top_down"
 
-    # Handle keyboard input - now supporting both WASD and arrow keys
+    # Handle keyboard input
     keys = pygame.key.get_pressed()
+
+    # Movement
     dx = (keys[pygame.K_d] or keys[pygame.K_RIGHT]) - (keys[pygame.K_a] or keys[pygame.K_LEFT])
     dy = (keys[pygame.K_s] or keys[pygame.K_DOWN]) - (keys[pygame.K_w] or keys[pygame.K_UP])
+
+    # Rotation (in first-person mode)
+    if player.view_mode == "first_person":
+        if keys[pygame.K_q]:  # Rotate left
+            player.rotate(-1)
+        if keys[pygame.K_e]:  # Rotate right
+            player.rotate(1)
+
     player.move(dx, dy, window_width, window_height, game_map)
 
     # Draw everything
     screen.fill(BLACK)
-    game_map.draw(screen, player)
-    player.draw(screen)
-    draw_ui_text(screen, USE_CLUSTERING, MAP_LOCKED)
 
-    # Update the display
+    if player.view_mode == "first_person":
+        rays = player.cast_rays(game_map)
+        player.draw_3d(screen, rays)
+    else:
+        game_map.draw(screen, player)
+        player.draw(screen)
+
+    draw_ui_text(screen, USE_CLUSTERING, MAP_LOCKED, player.view_mode)
+
     pygame.display.flip()
-
-    # Control game speed
     clock.tick(60)
 
-# Quit the game
 pygame.quit()
 sys.exit()

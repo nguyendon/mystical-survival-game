@@ -9,7 +9,8 @@ pygame.init()
 INITIAL_WINDOW_WIDTH = 800
 INITIAL_WINDOW_HEIGHT = 600
 TILE_SIZE = 32
-TREE_DENSITY = 0.15  # 15% chance of a tree on each tile
+INITIAL_TREE_DENSITY = 0.3  # Initial random tree placement
+FOREST_ITERATIONS = 2  # How many times to run the clustering algorithm
 
 # Colors
 BLACK = (0, 0, 0)
@@ -39,27 +40,35 @@ class Player:
         new_x = max(0, min(new_x, window_width - self.width))
         new_y = max(0, min(new_y, window_height - self.height))
 
-        # Convert pixel coordinates to tile coordinates
-        tile_x1 = new_x // TILE_SIZE
-        tile_y1 = new_y // TILE_SIZE
-        tile_x2 = (new_x + self.width - 1) // TILE_SIZE  # Check right edge
-        tile_y2 = (new_y + self.height - 1) // TILE_SIZE  # Check bottom edge
+        # Convert pixel coordinates to tile coordinates for collision checking
+        tile_x = new_x // TILE_SIZE
+        tile_y = new_y // TILE_SIZE
 
-        # Check if any corner would collide with a tree
-        corners_to_check = [
-            (tile_x1, tile_y1),  # Top-left
-            (tile_x2, tile_y1),  # Top-right
-            (tile_x1, tile_y2),  # Bottom-left
-            (tile_x2, tile_y2)   # Bottom-right
-        ]
+        # Check if the new position would collide with any trees
+        # We need to check both current and next tile when near boundaries
+        tiles_to_check = []
 
+        # Add all potentially overlapping tiles
+        for check_y in range(tile_y, tile_y + 2):
+            for check_x in range(tile_x, tile_x + 2):
+                if (check_x < game_map.width and check_y < game_map.height):
+                    tiles_to_check.append((check_x, check_y))
+
+        # Check if any of these tiles contain a tree
         can_move = True
-        for tile_x, tile_y in corners_to_check:
-            if (0 <= tile_x < game_map.width and
-                0 <= tile_y < game_map.height and
-                game_map.tiles[tile_y][tile_x] == 1):  # Tree collision
-                can_move = False
-                break
+        for check_x, check_y in tiles_to_check:
+            if game_map.tiles[check_y][check_x] == 1:  # Tree collision
+                # Calculate tile boundaries
+                tile_left = check_x * TILE_SIZE
+                tile_right = tile_left + TILE_SIZE
+                tile_top = check_y * TILE_SIZE
+                tile_bottom = tile_top + TILE_SIZE
+
+                # Check if player's new position would overlap with this tile
+                if (new_x < tile_right and new_x + self.width > tile_left and
+                    new_y < tile_bottom and new_y + self.height > tile_top):
+                    can_move = False
+                    break
 
         # Only update position if no collision
         if can_move:
@@ -80,18 +89,49 @@ class GameMap:
         self.height = window_height // TILE_SIZE
         self.tiles = [[0 for _ in range(self.width)] for _ in range(self.height)]
 
+    def count_neighbor_trees(self, x, y):
+        """Count the number of neighboring trees around a position."""
+        count = 0
+        for dy in [-1, 0, 1]:
+            for dx in [-1, 0, 1]:
+                if dx == 0 and dy == 0:
+                    continue
+                nx, ny = x + dx, y + dy
+                if (0 <= nx < self.width and 0 <= ny < self.height and
+                    self.tiles[ny][nx] == 1):
+                    count += 1
+        return count
+
     def generate_map(self):
-        # Create a random map with grass (0) and trees (1)
+        # First pass: Random initial tree placement
         for y in range(self.height):
             for x in range(self.width):
-                # Don't place trees in the center area (player spawn)
+                # Keep spawn area clear
                 center_x = self.width // 2
                 center_y = self.height // 2
-                if (abs(x - center_x) <= 1 and abs(y - center_y) <= 1):
-                    self.tiles[y][x] = 0  # Ensure spawn area is clear
+                if abs(x - center_x) <= 1 and abs(y - center_y) <= 1:
+                    self.tiles[y][x] = 0
                 else:
-                    # Random tree placement based on TREE_DENSITY
-                    self.tiles[y][x] = 1 if random.random() < TREE_DENSITY else 0
+                    self.tiles[y][x] = 1 if random.random() < INITIAL_TREE_DENSITY else 0
+
+        # Second pass: Create clusters using cellular automata
+        for _ in range(FOREST_ITERATIONS):
+            new_tiles = [[0 for _ in range(self.width)] for _ in range(self.height)]
+            for y in range(self.height):
+                for x in range(self.width):
+                    # Keep spawn area clear
+                    if abs(x - center_x) <= 1 and abs(y - center_y) <= 1:
+                        new_tiles[y][x] = 0
+                        continue
+
+                    neighbors = self.count_neighbor_trees(x, y)
+                    # Tree survival/birth rules
+                    if self.tiles[y][x] == 1:  # Tree exists
+                        new_tiles[y][x] = 1 if neighbors >= 3 else 0
+                    else:  # No tree
+                        new_tiles[y][x] = 1 if neighbors >= 5 else 0
+
+            self.tiles = new_tiles
 
     def draw(self, screen):
         for y in range(self.height):

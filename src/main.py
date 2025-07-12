@@ -59,7 +59,8 @@ class Player:
     def move(self, dx, dy, window_width, window_height, game_map):
         if self.view_mode == "first_person":
             # In first person, movement is relative to viewing angle
-            forward = dy * self.speed
+            # Invert dy for more intuitive controls (up = forward)
+            forward = -dy * self.speed  # Inverted dy
             strafe = dx * self.speed
 
             # Calculate new position based on angle
@@ -107,6 +108,52 @@ class Player:
         if can_move:
             self.x = new_x
             self.y = new_y
+
+    def find_safe_spawn(self, game_map, window_width, window_height):
+        """Find a safe spawn position without trees"""
+        center_x = window_width // 2
+        center_y = window_height // 2
+
+        # Try center first
+        if self.is_position_safe(center_x, center_y, game_map):
+            return center_x, center_y
+
+        # Search in expanding circles
+        for radius in range(TILE_SIZE, max(window_width, window_height) // 2, TILE_SIZE):
+            for angle in range(0, 360, 30):  # Check every 30 degrees
+                rad = math.radians(angle)
+                test_x = center_x + radius * math.cos(rad)
+                test_y = center_y + radius * math.sin(rad)
+
+                if self.is_position_safe(test_x, test_y, game_map):
+                    return test_x, test_y
+
+        # If no safe spot found, clear an area and use center
+        center_tile_x = center_x // TILE_SIZE
+        center_tile_y = center_y // TILE_SIZE
+        for dy in [-1, 0, 1]:
+            for dx in [-1, 0, 1]:
+                if (0 <= center_tile_x + dx < game_map.width and
+                    0 <= center_tile_y + dy < game_map.height):
+                    game_map.tiles[center_tile_y + dy][center_tile_x + dx] = 0
+
+        return center_x, center_y
+
+    def is_position_safe(self, x, y, game_map):
+        """Check if a position is safe (no trees)"""
+        tile_x = int(x // TILE_SIZE)
+        tile_y = int(y // TILE_SIZE)
+
+        # Check surrounding tiles
+        for dy in [-1, 0, 1]:
+            for dx in [-1, 0, 1]:
+                check_x = tile_x + dx
+                check_y = tile_y + dy
+                if (0 <= check_x < game_map.width and
+                    0 <= check_y < game_map.height and
+                    game_map.tiles[check_y][check_x] == 1):
+                    return False
+        return True
 
     def cast_rays(self, game_map):
         rays = []
@@ -253,12 +300,7 @@ class GameMap:
     def generate_random_map(self):
         for y in range(self.height):
             for x in range(self.width):
-                center_x = self.width // 2
-                center_y = self.height // 2
-                if abs(x - center_x) <= 1 and abs(y - center_y) <= 1:
-                    self.tiles[y][x] = 0
-                else:
-                    self.tiles[y][x] = 1 if random.random() < INITIAL_TREE_DENSITY else 0
+                self.tiles[y][x] = 1 if random.random() < INITIAL_TREE_DENSITY else 0
 
     def generate_clustered_map(self):
         self.generate_random_map()
@@ -267,12 +309,6 @@ class GameMap:
             new_tiles = [[0 for _ in range(self.width)] for _ in range(self.height)]
             for y in range(self.height):
                 for x in range(self.width):
-                    center_x = self.width // 2
-                    center_y = self.height // 2
-                    if abs(x - center_x) <= 1 and abs(y - center_y) <= 1:
-                        new_tiles[y][x] = 0
-                        continue
-
                     neighbors = self.count_neighbor_trees(x, y)
                     if self.tiles[y][x] == 1:
                         new_tiles[y][x] = 1 if neighbors >= 3 else 0
@@ -323,6 +359,9 @@ window_height = INITIAL_WINDOW_HEIGHT
 player = Player(window_width // 2, window_height // 2)
 game_map = GameMap(window_width, window_height)
 
+# Initial safe spawn
+player.x, player.y = player.find_safe_spawn(game_map, window_width, window_height)
+
 # Game loop
 clock = pygame.time.Clock()
 running = True
@@ -340,15 +379,17 @@ while running:
                 player_x_percent = player.x / window_width
                 player_y_percent = player.y / window_height
                 game_map = GameMap(window_width, window_height)
-                player.x = int(window_width * player_x_percent)
-                player.y = int(window_height * player_y_percent)
+                # Find safe spawn in new map
+                player.x, player.y = player.find_safe_spawn(game_map, window_width, window_height)
         elif event.type == pygame.KEYDOWN:
             if not MAP_LOCKED:
                 if event.key == pygame.K_c:
                     USE_CLUSTERING = not USE_CLUSTERING
                     game_map.generate_map()
+                    player.x, player.y = player.find_safe_spawn(game_map, window_width, window_height)
                 elif event.key == pygame.K_r:
                     game_map.generate_map()
+                    player.x, player.y = player.find_safe_spawn(game_map, window_width, window_height)
             if event.key == pygame.K_l:
                 MAP_LOCKED = not MAP_LOCKED
             elif event.key == pygame.K_v:

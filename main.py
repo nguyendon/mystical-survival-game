@@ -473,19 +473,74 @@ async def main():
                 else:
                     self.generate_random_map()
 
-        def draw(self, screen, player):
-            if player.view_mode == "top_down":
-                for y in range(self.height):
-                    for x in range(self.width):
-                        rect = (x * TILE_SIZE, y * TILE_SIZE, TILE_SIZE, TILE_SIZE)
-                        if self.tiles[y][x] == 0:  # Grass
-                            pygame.draw.rect(screen, GREEN, rect)
-                        elif self.tiles[y][x] == 1:  # Tree
-                            pygame.draw.rect(screen, BROWN, rect)
+        def draw_minimap(self, screen, player, minimap_size=200):
+            # Create a surface for the minimap with a black background
+            minimap_surface = pygame.Surface((minimap_size, minimap_size))
+            minimap_surface.fill(BLACK)
 
-                # Draw items
-                for item in self.items:
-                    item.draw(screen)
+            # Calculate scaling factors
+            map_width_pixels = self.width * TILE_SIZE
+            map_height_pixels = self.height * TILE_SIZE
+            scale_x = minimap_size / map_width_pixels
+            scale_y = minimap_size / map_height_pixels
+            scale = min(scale_x, scale_y)
+
+            # Calculate tile size on minimap
+            mini_tile_size = TILE_SIZE * scale
+
+            # Draw the map tiles
+            for y in range(self.height):
+                for x in range(self.width):
+                    mini_x = x * mini_tile_size
+                    mini_y = y * mini_tile_size
+                    mini_rect = (mini_x, mini_y, mini_tile_size, mini_tile_size)
+                    if self.tiles[y][x] == 0:  # Grass
+                        pygame.draw.rect(minimap_surface, GREEN, mini_rect)
+                    elif self.tiles[y][x] == 1:  # Tree
+                        pygame.draw.rect(minimap_surface, BROWN, mini_rect)
+
+            # Draw items on minimap
+            for item in self.items:
+                mini_x = item.x * scale
+                mini_y = item.y * scale
+                mini_item_size = ITEM_SIZE * scale
+                pygame.draw.rect(minimap_surface, ITEM_COLORS[item.type],
+                               (mini_x, mini_y, mini_item_size, mini_item_size))
+
+            # Draw player on minimap
+            mini_player_x = player.x * scale
+            mini_player_y = player.y * scale
+            mini_player_size = PLAYER_SIZE * scale
+            pygame.draw.rect(minimap_surface, WHITE,
+                            (mini_player_x, mini_player_y, mini_player_size, mini_player_size))
+
+            # Draw player direction indicator
+            tip_x = mini_player_x + mini_player_size/2 + math.cos(player.angle) * mini_player_size
+            tip_y = mini_player_y + mini_player_size/2 + math.sin(player.angle) * mini_player_size
+            pygame.draw.line(minimap_surface, YELLOW,
+                            (mini_player_x + mini_player_size/2, mini_player_y + mini_player_size/2),
+                            (tip_x, tip_y), 2)
+
+            # Add a border around the minimap
+            pygame.draw.rect(minimap_surface, WHITE, (0, 0, minimap_size, minimap_size), 2)
+
+            # Position the minimap in the top-right corner with some padding
+            padding = 10
+            screen.blit(minimap_surface, (screen.get_width() - minimap_size - padding, padding))
+
+        def draw(self, screen, player):
+                if player.view_mode == "top_down":
+                    for y in range(self.height):
+                        for x in range(self.width):
+                            rect = (x * TILE_SIZE, y * TILE_SIZE, TILE_SIZE, TILE_SIZE)
+                            if self.tiles[y][x] == 0:  # Grass
+                                pygame.draw.rect(screen, GREEN, rect)
+                            elif self.tiles[y][x] == 1:  # Tree
+                                pygame.draw.rect(screen, BROWN, rect)
+
+                    # Draw items
+                    for item in self.items:
+                        item.draw(screen)
 
     def draw_ui_text(screen, use_clustering, map_locked, view_mode, show_instructions):
         if not show_instructions:
@@ -509,7 +564,7 @@ async def main():
             movement_text = font.render("Use arrows/WASD to move, Q/E to rotate", True, RED)
             screen.blit(movement_text, (10, 130))
 
-        help_text = font.render("Press Shift + / to toggle instructions", True, RED)
+        help_text = font.render("Press Shift + / to toggle instructions, M to toggle minimap", True, RED)
         screen.blit(help_text, (10, 170))
 
     # Create game objects
@@ -519,6 +574,7 @@ async def main():
     player = Player(window_width // 2, window_height // 2)
     game_map = GameMap(window_width, window_height)
     show_instructions = True  # Variable to track if instructions should be shown
+    show_minimap = True      # Variable to track if minimap should be shown
 
     # Initial safe spawn
     player.x, player.y = player.find_safe_spawn(game_map, window_width, window_height)
@@ -552,6 +608,8 @@ async def main():
                     player.inventory.visible = not player.inventory.visible
                 elif event.key == pygame.K_SLASH and (keys[pygame.K_LSHIFT] or keys[pygame.K_RSHIFT]):
                     show_instructions = not show_instructions
+                elif event.key == pygame.K_m:
+                    show_minimap = not show_minimap
 
         # Handle keyboard input
         keys = pygame.key.get_pressed()
@@ -581,6 +639,10 @@ async def main():
         else:
             game_map.draw(screen, player)
             player.draw(screen)
+
+        # Draw minimap if enabled
+        if show_minimap:
+            game_map.draw_minimap(screen, player)
 
         # Draw inventory if visible
         player.inventory.draw(screen)

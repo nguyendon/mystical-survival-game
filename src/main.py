@@ -9,9 +9,11 @@ pygame.init()
 INITIAL_WINDOW_WIDTH = 800
 INITIAL_WINDOW_HEIGHT = 600
 TILE_SIZE = 32
-INITIAL_TREE_DENSITY = 0.35  # Reduced from 0.45
-FOREST_ITERATIONS = 2  # Reduced from 3
-USE_CLUSTERING = True  # Toggle for forest generation method
+PLAYER_SIZE = 20  # Reduced from 32 to 20
+INITIAL_TREE_DENSITY = 0.35
+FOREST_ITERATIONS = 2
+USE_CLUSTERING = True
+MAP_LOCKED = False  # New constant for map locking
 
 # Colors
 BLACK = (0, 0, 0)
@@ -19,6 +21,7 @@ WHITE = (255, 255, 255)
 GREEN = (0, 255, 0)
 BROWN = (139, 69, 19)
 RED = (255, 0, 0)
+YELLOW = (255, 255, 0)
 
 # Create the game window with resizable flag
 screen = pygame.display.set_mode((INITIAL_WINDOW_WIDTH, INITIAL_WINDOW_HEIGHT), pygame.RESIZABLE)
@@ -29,9 +32,10 @@ class Player:
     def __init__(self, x, y):
         self.x = x
         self.y = y
-        self.width = TILE_SIZE
-        self.height = TILE_SIZE
+        self.width = PLAYER_SIZE
+        self.height = PLAYER_SIZE
         self.speed = 5
+        self.view_mode = "top_down"  # New attribute for view mode
 
     def move(self, dx, dy, window_width, window_height, game_map):
         # Calculate new position
@@ -47,7 +51,6 @@ class Player:
         tile_y = new_y // TILE_SIZE
 
         # Check if the new position would collide with any trees
-        # We need to check both current and next tile when near boundaries
         tiles_to_check = []
 
         # Add all potentially overlapping tiles
@@ -78,7 +81,14 @@ class Player:
             self.y = new_y
 
     def draw(self, screen):
-        pygame.draw.rect(screen, WHITE, (self.x, self.y, self.width, self.height))
+        if self.view_mode == "top_down":
+            pygame.draw.rect(screen, WHITE, (self.x, self.y, self.width, self.height))
+            # Draw a small triangle to indicate direction (facing up by default)
+            pygame.draw.polygon(screen, YELLOW, [
+                (self.x + self.width // 2, self.y),  # Top
+                (self.x + self.width // 4, self.y + self.height // 2),  # Bottom left
+                (self.x + 3 * self.width // 4, self.y + self.height // 2)  # Bottom right
+            ])
 
 # Simple map class
 class GameMap:
@@ -144,26 +154,39 @@ class GameMap:
 
     def generate_map(self):
         """Generate map based on current generation method"""
-        if USE_CLUSTERING:
-            self.generate_clustered_map()
-        else:
-            self.generate_random_map()
+        if not MAP_LOCKED:
+            if USE_CLUSTERING:
+                self.generate_clustered_map()
+            else:
+                self.generate_random_map()
 
-    def draw(self, screen):
-        for y in range(self.height):
-            for x in range(self.width):
-                rect = (x * TILE_SIZE, y * TILE_SIZE, TILE_SIZE, TILE_SIZE)
-                if self.tiles[y][x] == 0:  # Grass
-                    pygame.draw.rect(screen, GREEN, rect)
-                elif self.tiles[y][x] == 1:  # Tree
-                    pygame.draw.rect(screen, BROWN, rect)
+    def draw(self, screen, player):
+        if player.view_mode == "top_down":
+            for y in range(self.height):
+                for x in range(self.width):
+                    rect = (x * TILE_SIZE, y * TILE_SIZE, TILE_SIZE, TILE_SIZE)
+                    if self.tiles[y][x] == 0:  # Grass
+                        pygame.draw.rect(screen, GREEN, rect)
+                    elif self.tiles[y][x] == 1:  # Tree
+                        pygame.draw.rect(screen, BROWN, rect)
 
-def draw_mode_text(screen, use_clustering):
-    """Draw the current forest generation mode"""
+def draw_ui_text(screen, use_clustering, map_locked):
+    """Draw the current forest generation mode and controls"""
     font = pygame.font.Font(None, 36)
     mode = "Clustered" if use_clustering else "Random"
-    text = font.render(f"Mode: {mode} (C to toggle, R to regenerate)", True, RED)
-    screen.blit(text, (10, 10))
+    lock_status = "LOCKED" if map_locked else "UNLOCKED"
+
+    # Mode text
+    mode_text = font.render(f"Mode: {mode}", True, RED)
+    screen.blit(mode_text, (10, 10))
+
+    # Controls text
+    controls_text = font.render(f"Map: {lock_status} (L to lock, C to toggle, R to regenerate)", True, RED)
+    screen.blit(controls_text, (10, 50))
+
+    # View mode text
+    view_text = font.render("V to toggle view mode", True, RED)
+    screen.blit(view_text, (10, 90))
 
 # Create game objects
 window_width = INITIAL_WINDOW_WIDTH
@@ -185,19 +208,25 @@ while running:
             window_width = event.w
             window_height = event.h
             screen = pygame.display.set_mode((window_width, window_height), pygame.RESIZABLE)
-            # Store player position as percentage of screen before resize
-            player_x_percent = player.x / window_width
-            player_y_percent = player.y / window_height
-            game_map = GameMap(window_width, window_height)  # Regenerate map for new size
-            # Restore player position relative to new screen size
-            player.x = int(window_width * player_x_percent)
-            player.y = int(window_height * player_y_percent)
+            if not MAP_LOCKED:
+                # Store player position as percentage of screen before resize
+                player_x_percent = player.x / window_width
+                player_y_percent = player.y / window_height
+                game_map = GameMap(window_width, window_height)  # Regenerate map for new size
+                # Restore player position relative to new screen size
+                player.x = int(window_width * player_x_percent)
+                player.y = int(window_height * player_y_percent)
         elif event.type == pygame.KEYDOWN:
-            if event.key == pygame.K_c:  # Toggle clustering
-                USE_CLUSTERING = not USE_CLUSTERING
-                game_map.generate_map()
-            elif event.key == pygame.K_r:  # Regenerate map
-                game_map.generate_map()
+            if not MAP_LOCKED:
+                if event.key == pygame.K_c:  # Toggle clustering
+                    USE_CLUSTERING = not USE_CLUSTERING
+                    game_map.generate_map()
+                elif event.key == pygame.K_r:  # Regenerate map
+                    game_map.generate_map()
+            if event.key == pygame.K_l:  # Toggle map lock
+                MAP_LOCKED = not MAP_LOCKED
+            elif event.key == pygame.K_v:  # Toggle view mode
+                player.view_mode = "first_person" if player.view_mode == "top_down" else "top_down"
 
     # Handle keyboard input - now supporting both WASD and arrow keys
     keys = pygame.key.get_pressed()
@@ -207,9 +236,9 @@ while running:
 
     # Draw everything
     screen.fill(BLACK)
-    game_map.draw(screen)
+    game_map.draw(screen, player)
     player.draw(screen)
-    draw_mode_text(screen, USE_CLUSTERING)
+    draw_ui_text(screen, USE_CLUSTERING, MAP_LOCKED)
 
     # Update the display
     pygame.display.flip()

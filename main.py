@@ -564,7 +564,7 @@ async def main():
             movement_text = font.render("Use arrows/WASD to move, Q/E to rotate", True, RED)
             screen.blit(movement_text, (10, 130))
 
-        help_text = font.render("Press Shift + / to toggle instructions, M to toggle minimap", True, RED)
+        help_text = font.render("Press / to toggle instructions, M to toggle minimap", True, RED)
         screen.blit(help_text, (10, 170))
 
     # Create game objects
@@ -606,7 +606,7 @@ async def main():
                     player.view_mode = "first_person" if player.view_mode == "top_down" else "top_down"
                 elif event.key == pygame.K_i:
                     player.inventory.visible = not player.inventory.visible
-                elif event.key == pygame.K_SLASH and (keys[pygame.K_LSHIFT] or keys[pygame.K_RSHIFT]):
+                elif event.key == pygame.K_SLASH:
                     show_instructions = not show_instructions
                 elif event.key == pygame.K_m:
                     show_minimap = not show_minimap

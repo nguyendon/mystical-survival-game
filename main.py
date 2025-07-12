@@ -139,40 +139,45 @@ async def main():
 
         def try_move(self, dx, dy, window_width, window_height, game_map):
             """Attempt to move by the given delta, checking for collisions"""
+            # Try moving horizontally
             new_x = self.x + dx
-            new_y = self.y + dy
-
-            # Keep player within screen bounds
-            new_x = max(PLAYER_SIZE, min(new_x, window_width - PLAYER_SIZE))
-            new_y = max(PLAYER_SIZE, min(new_y, window_height - PLAYER_SIZE))
-
-            # Convert pixel coordinates to tile coordinates for collision checking
-            tile_x = int(new_x // TILE_SIZE)
-            tile_y = int(new_y // TILE_SIZE)
-
-            # Check if the new position would collide with any trees
-            if not self.check_collision(new_x, new_y, game_map):
+            new_x = max(0, min(new_x, window_width - self.width))
+            if not self.check_collision(new_x, self.y, game_map):
                 self.x = new_x
+
+            # Try moving vertically
+            new_y = self.y + dy
+            new_y = max(0, min(new_y, window_height - self.height))
+            if not self.check_collision(self.x, new_y, game_map):
                 self.y = new_y
 
         def check_collision(self, x, y, game_map):
             """Check if a position would result in a collision"""
-            # Get the tiles that the player's corners would occupy
-            corners = [
-                (x, y),  # Top-left
-                (x + self.width, y),  # Top-right
-                (x, y + self.height),  # Bottom-left
-                (x + self.width, y + self.height)  # Bottom-right
-            ]
+            # Convert player bounds to tile coordinates
+            player_left = int(x // TILE_SIZE)
+            player_right = int((x + self.width) // TILE_SIZE)
+            player_top = int(y // TILE_SIZE)
+            player_bottom = int((y + self.height) // TILE_SIZE)
 
-            for corner_x, corner_y in corners:
-                tile_x = int(corner_x // TILE_SIZE)
-                tile_y = int(corner_y // TILE_SIZE)
+            # Check tiles that the player overlaps
+            for tile_y in range(player_top, player_bottom + 1):
+                for tile_x in range(player_left, player_right + 1):
+                    if (0 <= tile_x < game_map.width and
+                        0 <= tile_y < game_map.height and
+                        game_map.tiles[tile_y][tile_x] == 1):
 
-                if (0 <= tile_x < game_map.width and
-                    0 <= tile_y < game_map.height and
-                    game_map.tiles[tile_y][tile_x] == 1):
-                    return True
+                        # Calculate exact distances to tile edges
+                        tile_left = tile_x * TILE_SIZE
+                        tile_right = (tile_x + 1) * TILE_SIZE
+                        tile_top = tile_y * TILE_SIZE
+                        tile_bottom = (tile_y + 1) * TILE_SIZE
+
+                        # Only collide if we're actually overlapping the tile
+                        if (x + self.width > tile_left and
+                            x < tile_right and
+                            y + self.height > tile_top and
+                            y < tile_bottom):
+                            return True
             return False
 
         def try_pickup_items(self, game_map):
@@ -351,6 +356,13 @@ async def main():
             if self.view_mode == "top_down":
                 # Draw player rectangle
                 pygame.draw.rect(screen, WHITE, (self.x, self.y, self.width, self.height))
+
+                # Draw collision buffer zone for debugging
+                COLLISION_BUFFER = 2
+                debug_color = (255, 0, 0, 128)  # Red with transparency
+                debug_surface = pygame.Surface((self.width + COLLISION_BUFFER * 2, self.height + COLLISION_BUFFER * 2), pygame.SRCALPHA)
+                pygame.draw.rect(debug_surface, debug_color, (0, 0, self.width + COLLISION_BUFFER * 2, self.height + COLLISION_BUFFER * 2))
+                screen.blit(debug_surface, (self.x - COLLISION_BUFFER, self.y - COLLISION_BUFFER))
 
                 # Calculate direction indicator points
                 tip_x = self.x + self.width/2 + math.cos(self.angle) * self.width

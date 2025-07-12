@@ -18,6 +18,7 @@ MAP_LOCKED = False
 FOV = math.pi / 3  # 60 degrees field of view
 NUM_RAYS = 120  # Number of rays to cast
 MAX_DEPTH = 800  # Maximum ray distance
+MIN_DISTANCE = 0.1  # Minimum ray distance to prevent division by zero
 
 # Colors
 BLACK = (0, 0, 0)
@@ -36,7 +37,7 @@ pygame.display.set_caption("Mystical Survival Game")
 class Ray:
     def __init__(self, angle):
         self.angle = angle
-        self.distance = 0
+        self.distance = MAX_DEPTH
         self.hit_point = (0, 0)
 
 class Player:
@@ -70,8 +71,8 @@ class Player:
             new_y = self.y + dy * self.speed
 
         # Keep player within screen bounds
-        new_x = max(0, min(new_x, window_width - self.width))
-        new_y = max(0, min(new_y, window_height - self.height))
+        new_x = max(PLAYER_SIZE, min(new_x, window_width - PLAYER_SIZE))
+        new_y = max(PLAYER_SIZE, min(new_y, window_height - PLAYER_SIZE))
 
         # Convert pixel coordinates to tile coordinates for collision checking
         tile_x = int(new_x // TILE_SIZE)
@@ -81,9 +82,9 @@ class Player:
         tiles_to_check = []
 
         # Add all potentially overlapping tiles
-        for check_y in range(tile_y, tile_y + 2):
-            for check_x in range(tile_x, tile_x + 2):
-                if (check_x < game_map.width and check_y < game_map.height):
+        for check_y in range(tile_y - 1, tile_y + 2):
+            for check_x in range(tile_x - 1, tile_x + 2):
+                if (0 <= check_x < game_map.width and 0 <= check_y < game_map.height):
                     tiles_to_check.append((check_x, check_y))
 
         # Check if any of these tiles contain a tree
@@ -115,7 +116,7 @@ class Player:
         for i in range(NUM_RAYS):
             ray = Ray(start_angle + i * angle_step)
 
-            # Ray starting point
+            # Ray starting point (center of player)
             ray_x = self.x + self.width/2
             ray_y = self.y + self.height/2
 
@@ -123,37 +124,61 @@ class Player:
             ray_cos = math.cos(ray.angle)
             ray_sin = math.sin(ray.angle)
 
-            # Distance to next tile boundary
-            distance = 0
+            # DDA (Digital Differential Analysis) algorithm for ray casting
+            map_x = int(ray_x // TILE_SIZE)
+            map_y = int(ray_y // TILE_SIZE)
+
+            # Length of ray from current position to next x or y-side
+            delta_dist_x = abs(1 / ray_cos) if ray_cos != 0 else float('inf')
+            delta_dist_y = abs(1 / ray_sin) if ray_sin != 0 else float('inf')
+
+            # Calculate step and initial side_dist
+            if ray_cos < 0:
+                step_x = -1
+                side_dist_x = (ray_x - map_x * TILE_SIZE) / TILE_SIZE * delta_dist_x
+            else:
+                step_x = 1
+                side_dist_x = ((map_x + 1) * TILE_SIZE - ray_x) / TILE_SIZE * delta_dist_x
+
+            if ray_sin < 0:
+                step_y = -1
+                side_dist_y = (ray_y - map_y * TILE_SIZE) / TILE_SIZE * delta_dist_y
+            else:
+                step_y = 1
+                side_dist_y = ((map_y + 1) * TILE_SIZE - ray_y) / TILE_SIZE * delta_dist_y
+
+            # Perform DDA
             hit = False
-
+            distance = 0
             while not hit and distance < MAX_DEPTH:
-                distance += 1
+                # Jump to next map square
+                if side_dist_x < side_dist_y:
+                    side_dist_x += delta_dist_x
+                    map_x += step_x
+                    distance = side_dist_x
+                else:
+                    side_dist_y += delta_dist_y
+                    map_y += step_y
+                    distance = side_dist_y
 
-                # Check ray position
-                check_x = int((ray_x + ray_cos * distance) // TILE_SIZE)
-                check_y = int((ray_y + ray_sin * distance) // TILE_SIZE)
-
-                # Check if ray is out of bounds
-                if (check_x < 0 or check_x >= game_map.width or
-                    check_y < 0 or check_y >= game_map.height):
-                    hit = True
-                    continue
-
-                # Check if ray hit a tree
-                if game_map.tiles[check_y][check_x] == 1:
-                    hit = True
-                    ray.hit_point = (ray_x + ray_cos * distance,
-                                   ray_y + ray_sin * distance)
-                    ray.distance = distance
+                # Check if ray has hit a wall
+                if (0 <= map_x < game_map.width and 0 <= map_y < game_map.height):
+                    if game_map.tiles[map_y][map_x] == 1:
+                        hit = True
+                        ray.distance = max(MIN_DISTANCE, distance * TILE_SIZE)
+                        ray.hit_point = (ray_x + ray_cos * distance * TILE_SIZE,
+                                       ray_y + ray_sin * distance * TILE_SIZE)
+                else:
+                    break
 
             if not hit:
                 ray.distance = MAX_DEPTH
                 ray.hit_point = (ray_x + ray_cos * MAX_DEPTH,
                                ray_y + ray_sin * MAX_DEPTH)
 
-            # Fix fisheye effect by adjusting distance
+            # Fix fisheye effect
             ray.distance *= math.cos(ray.angle - self.angle)
+            ray.distance = max(MIN_DISTANCE, ray.distance)  # Ensure minimum distance
 
             rays.append(ray)
 
@@ -190,14 +215,15 @@ class Player:
         strip_width = screen.get_width() // len(rays)
         for i, ray in enumerate(rays):
             # Calculate wall height based on distance
-            wall_height = (TILE_SIZE * screen.get_height()) / ray.distance
+            wall_height = min((TILE_SIZE * screen.get_height()) / ray.distance, screen.get_height() * 2)
 
             # Calculate wall strip position
             wall_top = (screen.get_height() - wall_height) / 2
             wall_bottom = (screen.get_height() + wall_height) / 2
 
-            # Draw wall strip
-            wall_color = (max(0, min(255, 255 - ray.distance * 0.5)),) * 3  # Darken with distance
+            # Draw wall strip with distance shading
+            shade = max(0, min(255, 255 - ray.distance * 0.25))
+            wall_color = (shade, shade * 0.8, shade * 0.6)  # Brownish color with distance shading
             pygame.draw.rect(screen, wall_color,
                            (i * strip_width, wall_top,
                             strip_width + 1, wall_bottom - wall_top))

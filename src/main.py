@@ -9,8 +9,8 @@ pygame.init()
 INITIAL_WINDOW_WIDTH = 800
 INITIAL_WINDOW_HEIGHT = 600
 TILE_SIZE = 32
-INITIAL_TREE_DENSITY = 0.3  # Initial random tree placement
-FOREST_ITERATIONS = 2  # How many times to run the clustering algorithm
+INITIAL_TREE_DENSITY = 0.45  # Increased from 0.3 to 0.45
+FOREST_ITERATIONS = 3  # Increased from 2 to 3 for more clustering
 
 # Colors
 BLACK = (0, 0, 0)
@@ -129,7 +129,7 @@ class GameMap:
                     if self.tiles[y][x] == 1:  # Tree exists
                         new_tiles[y][x] = 1 if neighbors >= 3 else 0
                     else:  # No tree
-                        new_tiles[y][x] = 1 if neighbors >= 5 else 0
+                        new_tiles[y][x] = 1 if neighbors >= 4 else 0  # Changed from 5 to 4 for denser forests
 
             self.tiles = new_tiles
 
@@ -170,10 +170,10 @@ while running:
             player.x = int(window_width * player_x_percent)
             player.y = int(window_height * player_y_percent)
 
-    # Handle keyboard input
+    # Handle keyboard input - now supporting both WASD and arrow keys
     keys = pygame.key.get_pressed()
-    dx = keys[pygame.K_d] - keys[pygame.K_a]  # Right - Left
-    dy = keys[pygame.K_s] - keys[pygame.K_w]  # Down - Up
+    dx = (keys[pygame.K_d] or keys[pygame.K_RIGHT]) - (keys[pygame.K_a] or keys[pygame.K_LEFT])
+    dy = (keys[pygame.K_s] or keys[pygame.K_DOWN]) - (keys[pygame.K_w] or keys[pygame.K_UP])
     player.move(dx, dy, window_width, window_height, game_map)
 
     # Draw everything

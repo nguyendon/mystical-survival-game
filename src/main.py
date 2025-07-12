@@ -42,11 +42,11 @@ YELLOW = (255, 255, 0)
 SKY_BLUE = (135, 206, 235)
 GROUND_GREEN = (34, 139, 34)
 ITEM_COLORS = {
-    ItemType.MUSHROOM: (200, 200, 200),
-    ItemType.BERRY: (255, 0, 0),
-    ItemType.STICK: (139, 69, 19),
-    ItemType.STONE: (128, 128, 128),
-    ItemType.FLOWER: (255, 192, 203)
+    ItemType.MUSHROOM: (255, 235, 205),  # Light beige for mushrooms
+    ItemType.BERRY: (220, 20, 60),       # Crimson red for berries
+    ItemType.STICK: (205, 133, 63),      # Peru brown for sticks
+    ItemType.STONE: (169, 169, 169),     # Dark gray for stones
+    ItemType.FLOWER: (255, 105, 180)     # Hot pink for flowers
 }
 
 class Item:
@@ -98,6 +98,8 @@ class Ray:
         self.angle = angle
         self.distance = MAX_DEPTH
         self.hit_point = (0, 0)
+        self.item = None
+        self.item_distance = float('inf')
 
 class Player:
     def __init__(self, x, y):
@@ -235,6 +237,46 @@ class Player:
             ray_cos = math.cos(ray.angle)
             ray_sin = math.sin(ray.angle)
 
+            # Check for items first
+            closest_item = None
+            closest_item_dist = float('inf')
+
+            for item in game_map.items:
+                # Calculate vector from ray origin to item center
+                item_center_x = item.x + item.width/2
+                item_center_y = item.y + item.height/2
+
+                # Vector from ray origin to item
+                to_item_x = item_center_x - ray_x
+                to_item_y = item_center_y - ray_y
+
+                # Length of this vector
+                to_item_length = math.sqrt(to_item_x**2 + to_item_y**2)
+
+                if to_item_length < MIN_DISTANCE:
+                    continue
+
+                # Dot product of ray direction and normalized vector to item
+                dot_product = (to_item_x * ray_cos + to_item_y * ray_sin) / to_item_length
+
+                # If item is behind ray or too far to sides, skip it
+                if dot_product < 0 or abs(dot_product) > 1:
+                    continue
+
+                # Calculate perpendicular distance to ray
+                perp_dist = abs(to_item_x * ray_sin - to_item_y * ray_cos)
+
+                # If item is too far from ray line, skip it
+                if perp_dist > ITEM_SIZE/2:
+                    continue
+
+                # Calculate actual distance along ray
+                dist = to_item_length * dot_product
+
+                if dist < closest_item_dist:
+                    closest_item_dist = dist
+                    closest_item = item
+
             # DDA algorithm for ray casting
             map_x = int(ray_x // TILE_SIZE)
             map_y = int(ray_y // TILE_SIZE)
@@ -291,6 +333,14 @@ class Player:
             ray.distance *= math.cos(ray.angle - self.angle)
             ray.distance = max(MIN_DISTANCE, ray.distance)
 
+            # Store item information if it's closer than the wall
+            if closest_item and closest_item_dist < ray.distance:
+                ray.item = closest_item
+                ray.item_distance = closest_item_dist * math.cos(ray.angle - self.angle)
+            else:
+                ray.item = None
+                ray.item_distance = float('inf')
+
             rays.append(ray)
 
         return rays
@@ -338,6 +388,25 @@ class Player:
             pygame.draw.rect(screen, wall_color,
                            (i * strip_width, wall_top,
                             strip_width + 1, wall_bottom - wall_top))
+
+            # Draw items if they exist and are closer than walls
+            if ray.item and ray.item_distance < ray.distance:
+                # Calculate item height based on distance
+                item_height = min((ITEM_SIZE * screen.get_height()) / ray.item_distance, screen.get_height())
+
+                # Calculate item position
+                item_top = (screen.get_height() - item_height) / 2
+                item_bottom = (screen.get_height() + item_height) / 2
+
+                # Get item color and apply distance shading
+                base_color = ITEM_COLORS[ray.item.type]
+                shade_factor = max(0.3, min(1.0, 1.0 - ray.item_distance * 0.001))
+                item_color = tuple(int(c * shade_factor) for c in base_color)
+
+                # Draw item
+                pygame.draw.rect(screen, item_color,
+                               (i * strip_width, item_top,
+                                strip_width + 1, item_bottom - item_top))
 
 class GameMap:
     def __init__(self, window_width, window_height):
